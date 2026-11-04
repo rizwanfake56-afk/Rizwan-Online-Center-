@@ -37,31 +37,41 @@ function App(){
     e.preventDefault();
     setSubmitState('submitting');
     setSubmitError('');
-    const trackingId = generateTrackingId();
-    const payload = {
-      tracking_id: trackingId,
-      name: form.name.trim(),
-      phone: form.phone.trim(),
-      service: form.service,
-      message: form.message.trim() || null,
-      status: 'प्राप्त हुआ',
-    };
-    try {
-      const { data, error } = await supabase
-        .from('requests')
-        .insert(payload)
-        .select('tracking_id, name, phone, service, message, status, created_at')
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) throw new Error('रिक्वेस्ट सेव नहीं हुई। कृपया पुनः प्रयास करें।');
-      setSubmittedOrder({
-        ...data,
-        date: new Date(data.created_at).toLocaleDateString('hi-IN'),
-      });
-      setSubmitState('success');
-    } catch (err) {
-      setSubmitError(err.message || 'कुछ गड़बड़ हुई। कृपया पुनः प्रयास करें।');
-      setSubmitState('error');
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const trackingId = generateTrackingId();
+      const payload = {
+        tracking_id: trackingId,
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        service: form.service,
+        message: form.message.trim() || null,
+        status: 'प्राप्त हुआ',
+      };
+      try {
+        const { data, error } = await supabase
+          .from('requests')
+          .insert(payload)
+          .select('tracking_id, name, phone, service, message, status, created_at')
+          .maybeSingle();
+        if (error) {
+          // Retry on unique constraint violation (duplicate tracking ID)
+          if (error.code === '23505' && attempt < MAX_RETRIES - 1) continue;
+          throw error;
+        }
+        if (!data) throw new Error('रिक्वेस्ट सेव नहीं हुई। कृपया पुनः प्रयास करें।');
+        setSubmittedOrder({
+          ...data,
+          date: new Date(data.created_at).toLocaleDateString('hi-IN'),
+        });
+        setSubmitState('success');
+        return;
+      } catch (err) {
+        if (attempt < MAX_RETRIES - 1 && (err.code === '23505' || err.message?.includes('duplicate'))) continue;
+        setSubmitError(err.message || 'कुछ गड़बड़ हुई। कृपया पुनः प्रयास करें।');
+        setSubmitState('error');
+        return;
+      }
     }
   };
   const go=(p)=>{setPage(p);setMobileMenu(false);window.scrollTo(0,0)};
@@ -106,8 +116,8 @@ function TrackPage({go}){
     setErrMsg('');
     try{
       const {data,error}=await supabase
-        .from('requests')
-        .select('tracking_id, name, phone, service, message, status, created_at')
+        .from('request_tracking')
+        .select('tracking_id, service, status, created_at')
         .eq('tracking_id',id)
         .maybeSingle();
       if(error) throw error;
@@ -123,12 +133,12 @@ function TrackPage({go}){
     }
   };
   return <main className="page-main"><div className="wrap narrow"><div className="page-heading"><span className="kicker">रिक्वेस्ट मैनेजमेंट</span><h1>आवेदन / रिक्वेस्ट ट्रैक करें</h1><p>अपनी ट्रैकिंग आईडी डालें और रिक्वेस्ट की वर्तमान स्थिति देखें।</p></div>
-    <form className="track-form" onSubmit={lookup}><div className="searchbox track-searchbox"><Search/><input value={trackingId} onChange={e=>setTrackingId(e.target.value.toUpperCase())} placeholder="ट्रैकिंग आईडी डालें (जैसे ROC1234567)" disabled={searchState==='searching'}/></div><button className="primary-btn track-btn" type="submit" disabled={searchState==='searching'}>{searchState==='searching'?<><Loader2 size={17} className="spin"/> खोज जारी...</>:<>स्थिति देखें <ArrowUpRight size={16}/></>}</button></form>
+    <form className="track-form" onSubmit={lookup}><div className="searchbox track-searchbox"><Search/><input value={trackingId} onChange={e=>setTrackingId(e.target.value.toUpperCase())} placeholder="ट्रैकिंग आईडी डालें (जैसे ROCAB3KX9)" disabled={searchState==='searching'}/></div><button className="primary-btn track-btn" type="submit" disabled={searchState==='searching'}>{searchState==='searching'?<><Loader2 size={17} className="spin"/> खोज जारी...</>:<>स्थिति देखें <ArrowUpRight size={16}/></>}</button></form>
     {searchState==='notfound'&&<div className="track-result notfound"><AlertCircle className="ic"/><div><h3>कोई रिक्वेस्ट नहीं मिली</h3><p>इस ट्रैकिंग आईडी से कोई रिक्वेस्ट नहीं मिली। आईडी जाँचकर पुनः प्रयास करें।</p></div></div>}
     {searchState==='error'&&<div className="track-result notfound"><AlertCircle className="ic"/><div><h3>समस्या हुई</h3><p>{errMsg}</p></div></div>}
     {searchState==='found'&&result&&<div className="track-result found">
       <div className="track-result-head"><span className="track-status-badge"><CheckCircle2 size={15}/> {result.status}</span><code>{result.tracking_id}</code></div>
-      <div className="track-detail-grid"><div className="track-detail"><small>सेवा</small><b>{result.service}</b></div><div className="track-detail"><small>नाम</small><b>{result.name}</b></div><div className="track-detail"><small>मोबाइल</small><b>{result.phone}</b></div><div className="track-detail"><small>दिनांक</small><b>{result.date}</b></div>{result.message&&<div className="track-detail full"><small>अतिरिक्त जानकारी</small><b>{result.message}</b></div>}</div>
+      <div className="track-detail-grid"><div className="track-detail"><small>सेवा</small><b>{result.service}</b></div><div className="track-detail"><small>दिनांक</small><b>{result.date}</b></div></div>
     </div>}
     {searchState==='idle'&&<div className="empty-card"><span><ClipboardList/></span><h3>अपनी रिक्वेस्ट ट्रैक करें</h3><p>रिक्वेस्ट भेजने के बाद मिली ट्रैकिंग आईडी यहाँ डालें।</p><button className="primary-btn" onClick={()=>go('services')}>नई रिक्वेस्ट बनाएं <ArrowUpRight size={16}/></button></div>}
   </div></main>

@@ -11,8 +11,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Format: ROC + 7 digits, e.g. ROC1234567
+// Format: ROC + 8 alphanumeric chars (uppercase, unambiguous — no 0/O/1/I)
+// ~2.8 trillion possible values, making brute-force enumeration impractical.
+const TRACKING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export function generateTrackingId() {
-  const n = Math.floor(1000000 + Math.random() * 9000000);
-  return 'ROC' + n;
+  let suffix = '';
+  for (let i = 0; i < 8; i++) {
+    suffix += TRACKING_ALPHABET[Math.floor(Math.random() * TRACKING_ALPHABET.length)];
+  }
+  return 'ROC' + suffix;
 }
